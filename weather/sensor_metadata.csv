@@ -1,0 +1,16 @@
+sensor_id,area,batch,timezone,unit_type
+S01,Gulberg,batch_1,UTC,PM2.5
+S02,DHA,batch_2,PKT,AQI
+S03,Johar Town,batch_1,UTC,PM2.5
+S04,Model Town,batch_2,PKT,AQI
+S05,Wagah,batch_1,UTC,PM2.5
+S06,Thokar Niaz Baig,batch_2,PKT,AQI
+S07,Allama Iqbal Town,batch_1,UTC,PM2.5
+S08,Shadman,batch_2,PKT,AQI
+S09,Cantt,batch_1,UTC,PM2.5
+S10,Faisal Town,batch_2,PKT,AQI
+S11,Township,batch_1,UTC,PM2.5
+S12,Walled City,batch_2,PKT,AQI
+S13,Raiwind Road,batch_1,UTC,PM2.5
+S14,Bahria Town,batch_2,PKT,AQI
+S15,Airport Road,batch_1,UTC,PM2.5
