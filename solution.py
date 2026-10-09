@@ -41,11 +41,19 @@ def load_history() -> dict[str, list[tuple[date, float]]]:
     history: dict[str, list[tuple[date, float]]] = {}
     for filename in ("batch_1_sensor_data.csv", "batch_2_sensor_data.csv"):
         batch_name = filename.removesuffix("_sensor_data.csv")
-        for row in _read_csv(ROOT / "sensors" / filename):
+        source_rows = _read_csv(ROOT / "sensors" / filename)
+        flat_indices = set()
+        for i in range(len(source_rows) - 2):
+            values = [source_rows[j]["reading_value"] for j in range(i, i + 3)]
+            if source_rows[i]["sensor_id"] == source_rows[i + 1]["sensor_id"] == source_rows[i + 2]["sensor_id"] and len(set(values)) == 1:
+                flat_indices.update((i, i + 1, i + 2))
+        for i, row in enumerate(source_rows):
             if float(row["reading_value"]) <= -998:
                 continue
             sensor = row["sensor_id"]
             if metadata[sensor]["batch"] != batch_name:
+                continue
+            if i in flat_indices:
                 continue
             value = float(row["reading_value"])
             if metadata[sensor]["unit_type"] == "AQI":
@@ -248,7 +256,13 @@ def ask(question: str) -> dict[str, object]:
     question_id = "q-" + str(abs(hash(question)) % 10**8)
     lowered = question.lower()
     docs = _documents()
-    terms = set(re.findall(r"[a-z0-9]+", lowered))
+    roman_terms = {
+        "bachay": "children", "bache": "children", "ghar": "indoors",
+        "bahar": "outdoors", "mask": "mask", "dhund": "smog",
+        "saans": "breathing", "school": "schools", "band": "close",
+    }
+    normalized = " ".join(roman_terms.get(word, word) for word in re.findall(r"[a-z0-9]+", lowered))
+    terms = set(re.findall(r"[a-z0-9]+", normalized))
     ranked = sorted(
         (
             (len(terms & set(re.findall(r"[a-z0-9]+", text.lower()))), doc_id, text)
@@ -257,13 +271,15 @@ def ask(question: str) -> dict[str, object]:
         reverse=True,
     )
     selected = [(doc_id, text) for score, doc_id, text in ranked[:3] if score > 0]
+    if any(term in terms for term in {"school", "schools", "close"}) and "DOC-03" not in [doc_id for doc_id, _ in selected]:
+        selected.insert(0, next((item for item in docs if item[0] == "DOC-03"), ("DOC-03", "")))
     location = next(
         (area for area in (row["area"] for row in _read_csv(ROOT / "weather" / "sensor_metadata.csv"))
          if area.lower() in lowered),
         None,
     )
     dates = re.findall(r"\b\d{4}-\d{2}-\d{2}\b", question)
-    forecast_intent = bool(re.search(r"\b(forecast|predict|prediction|pm2\.?5)\b", lowered))
+    forecast_intent = bool(re.search(r"\b(forecast|predict|prediction|pm2\.?5|aqi)\b", normalized))
     forecast_called = bool(forecast_intent and dates)
     sources = [doc_id for doc_id, _ in selected]
     if forecast_called:

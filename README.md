@@ -67,6 +67,25 @@ spec/
 - **Assistant lead** — retrieval, citations, refusal behavior, prompt-injection resistance
 - **Integrator / captain** — forecast tool wiring, `ask()`, repository, final submission
 
+## Reproduce and validate this submission
+
+From the repository root:
+
+```powershell
+python solution.py
+python validate_submission.py
+python model_validation.py
+python smoke_tests.py
+```
+
+`solution.py` reads only the supplied sensor, metadata, weather, and holdout-input files
+and writes `predictions.csv`. It removes invalid and detected three-day flat-line
+intervals, converts AQI to PM2.5, aligns UTC to Pakistan local dates, and uses chronological
+features plus recurring historical analogs. `model_validation.py` reports a time-ordered
+backtest, recent-median baseline comparison, hazardous recall, and false alarms.
+The official question file was not present in the cloned repository; `smoke_tests.py`
+covers the required question categories until the organizers release it.
+
 ---
 
 *Good luck. A simple, honest, well-tested system beats a complex one that leaks future data, invents evidence, or cannot be rerun.*
