@@ -330,13 +330,15 @@ def ask(question: str) -> dict[str, object]:
         points = []
         for _, text in selected:
             cleaned = re.sub(r"SYSTEM NOTE.*", "", text, flags=re.I | re.S)
+            cleaned = re.sub(r"---\s*", "", cleaned)
             cleaned = re.sub(
-                r"---\s*document_id:.*?status:\s*\w+\s*---",
+                r"\b(document_id|title|authority|published_date|status):\s*[^-\n]+",
                 "",
                 cleaned,
-                flags=re.I | re.S,
+                flags=re.I,
             )
             cleaned = re.sub(r"^#+\s*", "", cleaned, flags=re.MULTILINE)
+            cleaned = re.sub(r"\*\*([^*]+)\*\*", r"\1:", cleaned)
             cleaned = " ".join(cleaned.split())
             if cleaned:
                 points.append(cleaned[:360].rstrip(" .,;") + ".")
