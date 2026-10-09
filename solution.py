@@ -149,7 +149,23 @@ def _model_predictions() -> dict[tuple[str, date], float]:
         simulated = dict(values[sensor])
         for target in targets:
             features = _features(sensor, target, simulated, weather, sensors)
-            prediction = sum(weight * value for weight, value in zip(coefficients, features))
+            ridge_prediction = sum(weight * value for weight, value in zip(coefficients, features))
+            seasonal_values = [
+                simulated[target - timedelta(days=lag)]
+                for lag in (13, 26)
+                if target - timedelta(days=lag) in simulated
+            ]
+            if seasonal_values:
+                # The data has a strong 13-day sensor cycle; preserve its
+                # observed peaks while retaining a weather/trend component.
+                seasonal_prediction = seasonal_values[0]
+                if seasonal_prediction >= HAZARDOUS_PM25:
+                    # Do not wash out a historically recurring hazardous peak.
+                    prediction = 0.9 * seasonal_prediction + 0.1 * ridge_prediction
+                else:
+                    prediction = 0.25 * ridge_prediction + 0.75 * seasonal_prediction
+            else:
+                prediction = ridge_prediction
             prediction = min(500.0, max(0.0, prediction))
             forecasts[(sensor, target)] = prediction
             simulated[target] = prediction
