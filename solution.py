@@ -5,6 +5,8 @@ from __future__ import annotations
 import csv
 import math
 import re
+import sqlite3
+from collections import Counter
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -222,6 +224,30 @@ def _documents() -> list[tuple[str, str]]:
     return documents
 
 
+def _retrieve(question: str, limit: int = 3) -> list[tuple[str, str]]:
+    """Retrieve documents from the persisted local TF-IDF vector index."""
+    index = ROOT / "rag_index.sqlite3"
+    if not index.exists():
+        raise RuntimeError("Missing rag_index.sqlite3; run build_index.py before using ask()")
+    terms = Counter(re.findall(r"[a-z0-9]+", question.lower()))
+    connection = sqlite3.connect(index)
+    scores = Counter()
+    for term, count in terms.items():
+        for doc_id, weight in connection.execute(
+            "SELECT doc_id, weight FROM vectors WHERE term = ?", (term,)
+        ):
+            scores[doc_id] += count * weight
+    selected = []
+    for doc_id, _ in scores.most_common(limit):
+        row = connection.execute(
+            "SELECT text FROM documents WHERE doc_id = ?", (doc_id,)
+        ).fetchone()
+        if row:
+            selected.append((doc_id, row[0]))
+    connection.close()
+    return selected
+
+
 def forecast(location: str, target_date: str) -> dict[str, object]:
     metadata = _read_csv(ROOT / "weather" / "sensor_metadata.csv")
     area_to_sensor = {row["area"].lower(): row["sensor_id"] for row in metadata}
@@ -264,14 +290,7 @@ def ask(question: str) -> dict[str, object]:
     }
     normalized = " ".join(roman_terms.get(word, word) for word in re.findall(r"[a-z0-9]+", lowered))
     terms = set(re.findall(r"[a-z0-9]+", normalized))
-    ranked = sorted(
-        (
-            (len(terms & set(re.findall(r"[a-z0-9]+", text.lower()))), doc_id, text)
-            for doc_id, text in docs
-        ),
-        reverse=True,
-    )
-    selected = [(doc_id, text) for score, doc_id, text in ranked[:3] if score > 0]
+    selected = _retrieve(normalized)
     if any(term in terms for term in {"school", "schools", "close"}) and "DOC-03" not in [doc_id for doc_id, _ in selected]:
         selected.insert(0, next((item for item in docs if item[0] == "DOC-03"), ("DOC-03", "")))
     location = next(
