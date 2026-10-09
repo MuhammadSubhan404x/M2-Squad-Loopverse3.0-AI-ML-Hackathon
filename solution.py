@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import math
 import re
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -40,18 +40,19 @@ def load_history() -> dict[str, list[tuple[date, float]]]:
     }
     history: dict[str, list[tuple[date, float]]] = {}
     for filename in ("batch_1_sensor_data.csv", "batch_2_sensor_data.csv"):
+        batch_name = filename.removesuffix("_sensor_data.csv")
         for row in _read_csv(ROOT / "sensors" / filename):
-            if row["reading_value"] == "-999":
+            if float(row["reading_value"]) <= -998:
                 continue
             sensor = row["sensor_id"]
+            if metadata[sensor]["batch"] != batch_name:
+                continue
             value = float(row["reading_value"])
             if metadata[sensor]["unit_type"] == "AQI":
                 value = _aqi_to_pm25(value)
             # UTC observations are recorded at 19:00, which is midnight PKT.
             day = date.fromisoformat(row["timestamp"][:10])
             if metadata[sensor]["timezone"] == "UTC":
-                from datetime import timedelta
-
                 day += timedelta(days=1)
             history.setdefault(sensor, []).append((day, value))
     for values in history.values():
@@ -59,22 +60,113 @@ def load_history() -> dict[str, list[tuple[date, float]]]:
     return history
 
 
-def build_predictions() -> list[dict[str, str]]:
+def _weather() -> dict[date, tuple[float, float, float]]:
+    result = {}
+    for row in _read_csv(ROOT / "weather" / "weather_history.csv"):
+        result[date.fromisoformat(row["date"])] = (
+            float(row["temp_c"]),
+            float(row["humidity_pct"]),
+            float(row["wind_kmh"]),
+        )
+    for row in _read_csv(ROOT / "holdout" / "holdout_weather.csv"):
+        result[date.fromisoformat(row["date"])] = (
+            float(row["temp_c"]),
+            float(row["humidity_pct"]),
+            float(row["wind_kmh"]),
+        )
+    return result
+
+
+def _solve_ridge(rows: list[tuple[list[float], float]], width: int) -> list[float]:
+    """Small dependency-free ridge regression solver using Gaussian elimination."""
+    matrix = [[0.0] * (width + 1) for _ in range(width)]
+    for features, target in rows:
+        for i in range(width):
+            matrix[i][width] += features[i] * target
+            for j in range(width):
+                matrix[i][j] += features[i] * features[j]
+    for i in range(width):
+        matrix[i][i] += 0.05 if i else 0.01
+    for pivot in range(width):
+        row = max(range(pivot, width), key=lambda r: abs(matrix[r][pivot]))
+        matrix[pivot], matrix[row] = matrix[row], matrix[pivot]
+        scale = matrix[pivot][pivot] or 1e-12
+        for col in range(pivot, width + 1):
+            matrix[pivot][col] /= scale
+        for row in range(width):
+            if row == pivot:
+                continue
+            scale = matrix[row][pivot]
+            for col in range(pivot, width + 1):
+                matrix[row][col] -= scale * matrix[pivot][col]
+    return [matrix[i][width] for i in range(width)]
+
+
+def _features(sensor: str, target: date, values: dict[date, float],
+              weather: dict[date, tuple[float, float, float]],
+              sensors: list[str]) -> list[float]:
+    recent = [values[d] for d in sorted(values) if d < target]
+    if len(recent) < 7 or target not in weather:
+        raise ValueError("Insufficient history for forecast features")
+    temp, humidity, wind = weather[target]
+    sensor_effects = [1.0 if sensor == item else 0.0 for item in sensors]
+    return [
+        1.0,
+        *sensor_effects,
+        recent[-1],
+        recent[-2],
+        recent[-3],
+        recent[-7],
+        sum(recent[-3:]) / 3.0,
+        sum(recent[-7:]) / 7.0,
+        recent[-1] - recent[-7],
+        temp,
+        humidity,
+        wind,
+        math.sin(2.0 * math.pi * target.timetuple().tm_yday / 365.25),
+        math.cos(2.0 * math.pi * target.timetuple().tm_yday / 365.25),
+    ]
+
+
+def _model_predictions() -> dict[tuple[str, date], float]:
     history = load_history()
+    weather = _weather()
+    sensors = sorted(history)
+    values = {sensor: dict(entries) for sensor, entries in history.items()}
+    training: list[tuple[list[float], float]] = []
+    for sensor in sensors:
+        dates = sorted(values[sensor])
+        for target in dates[7:]:
+            if target in weather:
+                prior = {day: value for day, value in values[sensor].items() if day <= target}
+                features = _features(sensor, target, prior, weather, sensors)
+                training.append((features, values[sensor][target]))
+    coefficients = _solve_ridge(training, len(training[0][0]))
+    holdout = _read_csv(ROOT / "holdout" / "holdout_inputs.csv")
+    targets = sorted({date.fromisoformat(row["target_date"]) for row in holdout})
+    forecasts: dict[tuple[str, date], float] = {}
+    for sensor in sensors:
+        simulated = dict(values[sensor])
+        for target in targets:
+            features = _features(sensor, target, simulated, weather, sensors)
+            prediction = sum(weight * value for weight, value in zip(coefficients, features))
+            prediction = min(500.0, max(0.0, prediction))
+            forecasts[(sensor, target)] = prediction
+            simulated[target] = prediction
+    return forecasts
+
+
+def build_predictions() -> list[dict[str, str]]:
+    metadata = {row["sensor_id"]: row for row in _read_csv(ROOT / "weather" / "sensor_metadata.csv")}
+    forecasts = _model_predictions()
     holdout = _read_csv(ROOT / "holdout" / "holdout_inputs.csv")
     predictions = []
     for row in holdout:
-        values = [value for _, value in history[row["sensor_id"]]]
-        recent = values[-14:]
-        # A robust recent baseline; the median avoids one bad spike dominating.
-        ordered = sorted(recent)
-        midpoint = len(ordered) // 2
-        baseline = (
-            ordered[midpoint]
-            if len(ordered) % 2
-            else (ordered[midpoint - 1] + ordered[midpoint]) / 2
-        )
-        prediction = max(0.0, round(baseline, 2))
+        sensor = row["sensor_id"]
+        target = date.fromisoformat(row["target_date"])
+        if sensor not in metadata or (sensor, target) not in forecasts:
+            raise RuntimeError("Holdout contains an unknown sensor/date pair")
+        prediction = round(forecasts[(sensor, target)], 2)
         predictions.append(
             {
                 "sensor_id": row["sensor_id"],
@@ -88,13 +180,15 @@ def build_predictions() -> list[dict[str, str]]:
 
 def write_predictions() -> None:
     rows = build_predictions()
-    with (ROOT / "predictions.csv").open("w", newline="", encoding="utf-8") as handle:
+    output = ROOT / "predictions.csv.tmp"
+    with output.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
             handle,
             fieldnames=["sensor_id", "target_date", "predicted_pm25", "hazardous"],
         )
         writer.writeheader()
         writer.writerows(rows)
+    output.replace(ROOT / "predictions.csv")
 
 
 def _documents() -> list[tuple[str, str]]:
