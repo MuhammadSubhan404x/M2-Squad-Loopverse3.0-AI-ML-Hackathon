@@ -77,6 +77,7 @@ python validate_submission.py
 python model_validation.py
 python smoke_tests.py
 python build_faiss_index.py
+streamlit run app.py
 ```
 
 `build_faiss_index.py` chunks the 13 supplied Markdown documents, calls OpenAI's
@@ -91,6 +92,17 @@ features plus recurring historical analogs. `model_validation.py` reports a time
 backtest, recent-median baseline comparison, hazardous recall, and false alarms.
 The official question file was not present in the cloned repository; `smoke_tests.py`
 covers the required question categories until the organizers release it.
+
+## Streamlit UI
+
+After installing `requirements.txt` and building the FAISS index, launch the local UI:
+
+```powershell
+streamlit run app.py
+```
+
+The UI provides a forecast lookup for covered area/date pairs and an advisory assistant
+that displays the grounded answer, retrieved source IDs, and whether the forecast tool ran.
 
 ---
 
