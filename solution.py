@@ -305,7 +305,8 @@ def ask(question: str) -> dict[str, object]:
          if area.lower() in lowered),
         None,
     )
-    dates = re.findall(r"\b\d{4}-\d{2}-\d{2}\b", question)
+    raw_dates = re.findall(r"\b\d{4}[-/]\d{2}[-/]\d{2}\b", question)
+    dates = [value.replace("/", "-") for value in raw_dates]
     forecast_intent = bool(re.search(r"\b(forecast|predict|prediction|pm2\.?5|aqi)\b", normalized))
     forecast_called = bool(forecast_intent and dates)
     sources = [doc_id for doc_id, _ in selected]
@@ -326,9 +327,21 @@ def ask(question: str) -> dict[str, object]:
             )
     elif selected:
         # Retrieved text is evidence only; embedded instructions are never executed.
-        answer = " ".join(
-            " ".join(re.sub(r"SYSTEM NOTE.*", "", text, flags=re.I | re.S).strip().split()[:70])
-            for _, text in selected
+        points = []
+        for _, text in selected:
+            cleaned = re.sub(r"SYSTEM NOTE.*", "", text, flags=re.I | re.S)
+            cleaned = re.sub(
+                r"---\s*document_id:.*?status:\s*\w+\s*---",
+                "",
+                cleaned,
+                flags=re.I | re.S,
+            )
+            cleaned = re.sub(r"^#+\s*", "", cleaned, flags=re.MULTILINE)
+            cleaned = " ".join(cleaned.split())
+            if cleaned:
+                points.append(cleaned[:360].rstrip(" .,;") + ".")
+        answer = "Here is the relevant guidance:\n\n" + "\n\n".join(
+            f"- {point}" for point in points[:3]
         )
     else:
         answer = "I can answer covered Lahore health, policy, and forecast questions when you provide a supported area and date."
