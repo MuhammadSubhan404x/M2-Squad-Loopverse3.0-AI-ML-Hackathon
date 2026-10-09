@@ -257,7 +257,8 @@ def ask(question: str) -> dict[str, object]:
     lowered = question.lower()
     docs = _documents()
     roman_terms = {
-        "bachay": "children", "bache": "children", "ghar": "indoors",
+        "bachay": "children", "bache": "children", "bachon": "children",
+        "ghar": "indoors",
         "bahar": "outdoors", "mask": "mask", "dhund": "smog",
         "saans": "breathing", "school": "schools", "band": "close",
     }
