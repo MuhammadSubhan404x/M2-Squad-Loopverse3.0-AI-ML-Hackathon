@@ -7,6 +7,8 @@ import math
 import re
 import sqlite3
 from collections import Counter
+import json
+import os
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -225,26 +227,31 @@ def _documents() -> list[tuple[str, str]]:
 
 
 def _retrieve(question: str, limit: int = 3) -> list[tuple[str, str]]:
-    """Retrieve documents from the persisted local TF-IDF vector index."""
-    index = ROOT / "rag_index.sqlite3"
-    if not index.exists():
-        raise RuntimeError("Missing rag_index.sqlite3; run build_index.py before using ask()")
-    terms = Counter(re.findall(r"[a-z0-9]+", question.lower()))
-    connection = sqlite3.connect(index)
-    scores = Counter()
-    for term, count in terms.items():
-        for doc_id, weight in connection.execute(
-            "SELECT doc_id, weight FROM vectors WHERE term = ?", (term,)
-        ):
-            scores[doc_id] += count * weight
+    """Retrieve chunks with OpenAI query embeddings and persisted FAISS vectors."""
+    index_dir = ROOT / "rag_index"
+    if not (index_dir / "index.faiss").exists():
+        raise RuntimeError("Missing rag_index/index.faiss; set OPENAI_API_KEY and run build_faiss_index.py")
+    import faiss
+    import numpy as np
+    from openai import OpenAI
+
+    metadata = json.loads((index_dir / "metadata.json").read_text(encoding="utf-8"))
+    vector = np.asarray(
+        OpenAI().embeddings.create(model=metadata["model"], input=[question]).data[0].embedding,
+        dtype="float32",
+    ).reshape(1, -1)
+    faiss.normalize_L2(vector)
+    _, positions = faiss.read_index(str(index_dir / "index.faiss")).search(vector, limit)
+    records = metadata["records"]
     selected = []
-    for doc_id, _ in scores.most_common(limit):
-        row = connection.execute(
-            "SELECT text FROM documents WHERE doc_id = ?", (doc_id,)
-        ).fetchone()
-        if row:
-            selected.append((doc_id, row[0]))
-    connection.close()
+    used_docs = set()
+    for position in positions[0]:
+        if position < 0:
+            continue
+        record = records[position]
+        if record["doc_id"] not in used_docs:
+            selected.append((record["doc_id"], record["text"]))
+            used_docs.add(record["doc_id"])
     return selected
 
 

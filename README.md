@@ -76,12 +76,14 @@ python solution.py
 python validate_submission.py
 python model_validation.py
 python smoke_tests.py
-python build_index.py
+python build_faiss_index.py
 ```
 
-`build_index.py` creates `rag_index.sqlite3`, a local SQLite TF-IDF vector store from the
-13 supplied Markdown documents. `ask()` queries this persisted vector index with cosine-style
-TF-IDF weights and returns the source document IDs. No hosted vector database or API is used.
+`build_faiss_index.py` chunks the 13 supplied Markdown documents, calls OpenAI's
+`text-embedding-3-small` embedding model, normalizes the vectors, and persists them in
+`rag_index/index.faiss` with source metadata in `rag_index/metadata.json`. `ask()` embeds
+each question, searches FAISS using inner-product cosine similarity, and returns exact source IDs.
+Set `OPENAI_API_KEY` in the environment before building the index; never commit it.
 `solution.py` reads only the supplied sensor, metadata, weather, and holdout-input files
 and writes `predictions.csv`. It removes invalid and detected three-day flat-line
 intervals, converts AQI to PM2.5, aligns UTC to Pakistan local dates, and uses chronological
